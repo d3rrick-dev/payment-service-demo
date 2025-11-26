@@ -16,21 +16,41 @@ Java 25 | Spring Boot | Spring Data JPA | RabbitMQ | MySQL | Caffeine
 ---
 
 ## Architecture Overview
-+----------------------+       +---------------------+       +------------------+
-|   REST API (Spring)  |  -->  | RabbitMQ Exchange   |  -->  |  Payment Worker  |
-|  POST /payments      |       |  Async Queue        |       |  Async Processing|
-+----------------------+       +---------------------+       +------------------+
-|                                                           |
-|                                                           v
-|                                                     +----------+
-|                                                     | MySQL    |
-|                                                     | Payment  |
-|                                                     | Audit Log|
-|                                                     +----------+
-|
-v
-Cache (Caffeine)  --> prevents duplicate Idempotent requests to db.
+### Payment Service Workflow (UML Sequence Diagram)
 
+### Payment Service Workflow (UML Sequence Diagram)
+```mermaid
+sequenceDiagram
+    participant Client
+    participant API as Payment API
+    participant Cache as Idempotency Cache
+    participant DB as MySQL
+    participant MQ as RabbitMQ
+    participant Worker
+    participant Provider as Payment Provider
+
+    Client->>API: POST /payments + Idempotency-Key
+    API->>Cache: Check key
+
+    alt Cached
+        Cache-->>API: paymentId
+        API-->>Client: 200 OK
+    else New request
+        API->>DB: Create Payment(PENDING)
+        API->>Cache: Save idempotencyKey
+        API->>MQ: Publish Event
+        API-->>Client: 201 Created
+    end
+
+    MQ->>Worker: Process event
+    Worker->>DB: Update(Status=PROCESSING)
+    Worker->>Provider: Charge Payment
+    Provider-->>Worker: Result async
+
+    Provider->>API: Webhook callback
+    API->>API: Validate Signature
+    API->>DB: Update final status
+``` 
 Quick start:
 1. `docker-compose up -d`
 2. `mvn spring-boot:run`
